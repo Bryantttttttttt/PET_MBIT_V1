@@ -325,6 +325,139 @@ export interface MBTIType {
   elementModifier: string; // Used for fusion title
 }
 
+export interface RelationshipResult {
+  score: number;
+  type: string;
+  summary: string;
+  vibe: string;
+  advice: string;
+  bossRatio: { owner: number; pet: number };
+  bossText: string;
+}
+
+export const getRelationship = (petCode: string, ownerCode: string): RelationshipResult => {
+  // 1. Calculate Score
+  let score = 0;
+  for (let i = 0; i < 4; i++) {
+    if (petCode[i] === ownerCode[i]) score += 25;
+    else score += 15;
+  }
+
+  // 2. Determine Relationship Type based on dimensions
+  const p = { 
+    E: petCode[0] === 'E', 
+    I: petCode[0] === 'I',
+    N: petCode[1] === 'N', 
+    S: petCode[1] === 'S',
+    T: petCode[2] === 'T', 
+    F: petCode[2] === 'F',
+    J: petCode[3] === 'J',
+    P: petCode[3] === 'P'
+  };
+  const o = { 
+    E: ownerCode[0] === 'E', 
+    I: ownerCode[0] === 'I',
+    N: ownerCode[1] === 'N', 
+    S: ownerCode[1] === 'S',
+    T: ownerCode[2] === 'T', 
+    F: ownerCode[2] === 'F',
+    J: ownerCode[3] === 'J',
+    P: ownerCode[3] === 'P'
+  };
+
+  let type = "";
+  let summary = "";
+  let vibe = "";
+  let advice = "";
+  let bossRatio = { owner: 50, pet: 50 };
+  let bossText = "";
+
+  // Logic for 12 types
+  if (p.J && o.J && p.T && o.T) {
+    type = "双强指挥组";
+    summary = "家里的规矩，你们一人一半。";
+    vibe = "像两个项目经理在对接需求，一个眼神就知道该喂饭还是该铲屎。";
+    advice = "偶尔放下KPI，一起瘫在沙发上发个呆吧。";
+  } else if (p.E && o.E && !p.T && !o.T) {
+    type = "热闹贴贴组";
+    summary = "家里永远像在开派对。";
+    vibe = "两个社交悍匪的日常，邻居路过都要被你们的热情震慑。";
+    advice = "记得给邻居留点清静，或者带他们一起嗨。";
+  } else if (p.E !== o.E && p.T !== o.T) {
+    type = "反差萌搭档";
+    summary = "一个像夏天，一个像秋天。";
+    vibe = "你是冷静的观察者，它是快乐的小旋风，这种反差感最迷人。";
+    advice = "多包容对方的“怪癖”，那是你们独特的火花。";
+  } else if (p.I && o.I && p.T && o.T) {
+    type = "冷静守护组";
+    summary = "沉默是你们最深情的告白。";
+    vibe = "你在电脑前加班，它在脚边陪你，空气中充满了理性的温柔。";
+    advice = "虽然都不爱说话，但偶尔的互动也很重要。";
+  } else if (p.E && o.E && p.N && o.N && !p.J && !o.J) {
+    type = "戏精互撩组";
+    summary = "每天都在上演年度大戏。";
+    vibe = "一个眼神就能开启一场即兴表演，家里就是你们的百老汇。";
+    advice = "戏别太深，记得按时吃饭。";
+  } else if (!p.N && !o.N && p.J && o.J) {
+    type = "稳定陪伴型";
+    summary = "生活规律得像闹钟。";
+    vibe = "几点起床、几点散步、几点睡觉，你们有套完美的SOP。";
+    advice = "偶尔尝试一下计划外的小惊喜。";
+  } else if (o.I && p.E && !p.T) {
+    type = "情绪充电站";
+    summary = "它是你社交后的避风港。";
+    vibe = "你在外面耗尽了电量，回家看到它满格的热情，瞬间回血。";
+    advice = "它是你的能量来源，记得多给它点奖励。";
+  } else if (!p.J && !o.J && p.N && o.N) {
+    type = "生活冒险队";
+    summary = "世界那么大，你们想一起去看看。";
+    vibe = "两个不按常理出牌的灵魂，总能发现生活里奇奇怪怪的乐趣。";
+    advice = "冒险虽好，注意安全。";
+  } else if (p.I && o.I && !p.N && !o.N) {
+    type = "安静共处组";
+    summary = "最好的相处是互不打扰。";
+    vibe = "像两个安静看世界的小团伙，你发呆，它也刚好懒得动。";
+    advice = "保持这种节奏，你们的磁场很稳。";
+  } else if (p.J && !o.J && p.T) {
+    type = "主仆颠倒组";
+    summary = "表面你是主，其实它是王。";
+    vibe = "它负责安排全家的作息和心情，你负责执行和买单。";
+    advice = "认命吧，谁让它长得可爱呢。";
+  } else if (score < 65) {
+    type = "相爱相杀组";
+    summary = "虽然性格迥异，但谁也离不开谁。";
+    vibe = "日常充满了戏剧张力，像班主任和调皮学生，斗智斗勇。";
+    advice = "这种碰撞出的火花，才是生活的真谛。";
+  } else {
+    type = "灵魂共振组";
+    summary = "你们是彼此在世间的另一个分身。";
+    vibe = "默契高得惊人，有时候你还没开口，它已经知道你要干嘛。";
+    advice = "这种缘分万中无一，好好珍惜。";
+  }
+
+  // 3. Boss Logic
+  let pBoss = 50;
+  if (p.J && !o.J) pBoss += 15;
+  if (p.T && !o.T) pBoss += 10;
+  if (p.E && o.I) pBoss += 5;
+  if (!p.J && o.J) pBoss -= 15;
+  if (!p.T && o.T) pBoss -= 10;
+  
+  pBoss = Math.min(85, Math.max(15, pBoss));
+  bossRatio = { owner: 100 - pBoss, pet: pBoss };
+  
+  if (pBoss > 60) bossText = "表面你是主人，实际上它才是老大";
+  else if (pBoss < 40) bossText = "你是家里的绝对权威，它是你的小跟班";
+  else bossText = "你们平起平坐，家庭地位非常平等";
+
+  return { score, type, summary, vibe, advice, bossRatio, bossText };
+};
+
+export const ALL_MBTI_CODES = [
+  "ESTJ", "ISTJ", "ENTP", "INTJ", "ESFP", "ISFP", "ENTJ", "INFJ",
+  "ESTP", "ISTP", "ENFJ", "ISFJ", "ESFJ", "INTP", "ENFP", "INFP"
+];
+
 export interface ZodiacInfo {
   name: string;
   trait: string;

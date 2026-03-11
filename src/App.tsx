@@ -35,7 +35,10 @@ import {
   BREED_DATA,
   CAT_BREED_DATA,
   GENDER_LABELS,
-  getPersonalityTitleAndTemplate
+  getPersonalityTitleAndTemplate,
+  ALL_MBTI_CODES,
+  getRelationship,
+  RelationshipResult
 } from './data';
 
 type Step = 'home' | 'quiz' | 'result';
@@ -108,6 +111,8 @@ export default function App() {
   const [isGeneratingPDF, setIsGeneratingPDF] = useState(false);
   const [showToast, setShowToast] = useState(false);
   const [toastMessage, setToastMessage] = useState('');
+  const [ownerMbti, setOwnerMbti] = useState('INTJ');
+  const [matchResult, setMatchResult] = useState<RelationshipResult | null>(null);
   const reportRef = useRef<HTMLDivElement>(null);
 
   const showToastWithMsg = (msg: string) => {
@@ -308,183 +313,6 @@ export default function App() {
 
   const progress = ((currentQuestionIndex + 1) / QUESTIONS.length) * 100;
 
-  const handleImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (file) {
-      const reader = new FileReader();
-      reader.onloadend = async () => {
-        try {
-          // Resize immediately to save memory and avoid large state updates
-          const resized = await resizeImage(reader.result as string, 800, 800);
-          setReferenceImage(resized);
-        } catch (err) {
-          console.error('Image resize failed:', err);
-          setReferenceImage(reader.result as string);
-        }
-      };
-      reader.readAsDataURL(file);
-    }
-  };
-
-  const generateCharacterSheet = async () => {
-    if (!referenceImage) return;
-    setIsDesigning(true);
-    try {
-      let apiKey = process.env.GEMINI_API_KEY || import.meta.env.VITE_GEMINI_API_KEY;
-      if (apiKey) apiKey = apiKey.trim();
-      
-      if (!apiKey || apiKey === 'MY_GEMINI_API_KEY' || apiKey === '' || apiKey.includes('TODO')) {
-        console.error('Character Sheet: Gemini API Key is missing');
-        throw new Error('API_KEY_MISSING');
-      }
-      const ai = new GoogleGenAI({ apiKey });
-      
-      // Image is already resized in handleImageUpload
-      const mimeType = referenceImage.split(';')[0].split(':')[1] || 'image/jpeg';
-      const base64Data = referenceImage.split(',')[1];
-
-      const breedName = petType === 'dog' 
-        ? BREED_DATA.find(b => b.id === selectedBreedId)?.name 
-        : CAT_BREED_DATA.find(b => b.id === selectedBreedId)?.name;
-
-      const { title } = getPersonalityTitleAndTemplate(resultType.code, scores);
-
-      const prompt = `You are a manga character designer. Based on the provided reference image of a ${breedName} ${petType === 'dog' ? 'dog' : 'cat'} named "${petName}" with a "${title}" (${resultType.code}) personality and ${zodiac.name} zodiac sign, create a character sheet.
-Requirements:
-- Must maintain consistency with the photo: fur color, facial features, ear shape, body type (especially breed characteristics).
-- Style: Japanese kawaii, soft pastel colors, hand-drawn texture, clean lines.
-- Output must contain: Front view, Side view, and 3 expressions that reflect the "${title}" persona.
-- Background: Solid color or minimal, no scene.
-- CRITICAL: ABSOLUTELY NO TEXT, LETTERS, NUMBERS, OR SYMBOLS in the image.
-- DO NOT draw speech bubbles, thought bubbles, or any UI elements.
-- DO NOT include any captions, labels, or watermarks.
-- The image must be 100% PURELY VISUAL. Any text will ruin the design.
-- The character sheet should be suitable for a 4-6 panel comic of the "same character".
-- Output 1 single image containing all these elements.`;
-
-      const response = await ai.models.generateContent({
-        model: 'gemini-2.5-flash-image',
-        contents: {
-          parts: [
-            {
-              inlineData: {
-                data: base64Data,
-                mimeType: mimeType
-              }
-            },
-            { text: prompt }
-          ]
-        }
-      });
-
-      let imageUrl = null;
-      for (const part of response.candidates?.[0]?.content?.parts || []) {
-        if (part.inlineData) {
-          imageUrl = `data:image/png;base64,${part.inlineData.data}`;
-          break;
-        }
-      }
-
-      if (imageUrl) {
-        setDesignResult(imageUrl);
-      } else {
-        throw new Error('未能生成角色设定图');
-      }
-    } catch (error: any) {
-      console.error('Character design failed:', error);
-      const errorStr = JSON.stringify(error);
-      if (error?.message === 'API_KEY_MISSING') {
-        showToastWithMsg('API密钥未配置。请在 AI Studio 设置中添加 Gemini API Key。');
-      } else if (errorStr.includes('API_KEY_INVALID')) {
-        showToastWithMsg('API密钥无效，请检查Key是否填错或有空格');
-      } else if (errorStr.includes('Safety') || error?.message?.includes('Safety')) {
-        showToastWithMsg('内容触发安全策略，请尝试更换照片或描述');
-      } else {
-        showToastWithMsg(`设定图生成失败: ${error?.message || '未知错误'}`);
-      }
-    } finally {
-      setIsDesigning(false);
-    }
-  };
-
-  const generateComicScript = async () => {
-    setIsGeneratingScript(true);
-    try {
-      let apiKey = process.env.GEMINI_API_KEY || import.meta.env.VITE_GEMINI_API_KEY;
-      if (apiKey) apiKey = apiKey.trim();
-      
-      if (!apiKey || apiKey === 'MY_GEMINI_API_KEY' || apiKey === '' || apiKey.includes('TODO')) {
-        console.error('Comic Script: Gemini API Key is missing');
-        throw new Error('API_KEY_MISSING');
-      }
-      const ai = new GoogleGenAI({ apiKey });
-      const { title } = getPersonalityTitleAndTemplate(resultType.code, scores);
-      const breedName = petType === 'dog' 
-        ? BREED_DATA.find(b => b.id === selectedBreedId)?.name 
-        : CAT_BREED_DATA.find(b => b.id === selectedBreedId)?.name;
-
-      const prompt = `根据以下宠物人格信息，生成一个6格宠物漫画脚本（必须有剧情推进与对白/旁白）。
-
-输入信息：
-- 宠物名字：${petName}
-- 物种：${petType === 'dog' ? '狗' : '猫'}
-- 品种：${breedName}
-- MBTI：${resultType.code}
-- 星座：${zodiac.name}
-- 人格称号：${title}
-
-脚本结构（起承转合）：
-Panel 1：观察 (宠物注意到主人在忙碌或疲惫) -> 旁白或宠物心声
-Panel 2：靠近 (宠物走近主人，寻求关注) -> 宠物心声
-Panel 3：行动 (宠物做出一个贴心或搞笑的动作) -> 宠物心声
-Panel 4：安慰 (宠物陪伴在主人身边) -> 宠物心声
-Panel 5：情绪转折 (主人被宠物治愈或逗笑) -> 主人对宠物说的话
-Panel 6：总结 (主人抱住宠物，并展示宠物人格信息卡) -> 旁白或主人感言
-
-对白规则：
-- 每格必须有一句对白或旁白。
-- 必须是简体中文，不超过12个字。
-- 明确区分：前4格通常是宠物的内心戏，后2格通常是主人的反馈。
-
-输出格式严格如下（直接输出文本，不要包含Markdown代码块或任何额外说明）：
-Panel 1:
-Scene: [场景描述]
-Action: [动作描述]
-Speaker: [谁在说话：毛孩子/主人/旁白]
-Text: [对话或旁白内容]
-...
-Panel 6:
-Scene: [场景描述]
-Action: [动作描述]
-Speaker: [谁在说话：毛孩子/主人/旁白]
-Text: [对话或旁白内容]`;
-
-      const response = await ai.models.generateContent({
-        model: 'gemini-flash-latest',
-        contents: prompt,
-      });
-
-      if (response.text) {
-        setComicScript(response.text);
-        return response.text;
-      }
-      throw new Error('未能生成剧本');
-    } catch (error: any) {
-      console.error('Script generation failed:', error);
-      const errorStr = JSON.stringify(error);
-      if (error?.message === 'API_KEY_MISSING') {
-        showToastWithMsg('API密钥未配置。请在 AI Studio 设置中添加 Gemini API Key。');
-      } else if (errorStr.includes('API_KEY_INVALID')) {
-        showToastWithMsg('API密钥无效，请检查Key是否填错或有空格');
-      } else {
-        showToastWithMsg(`剧本生成失败: ${error?.message || '未知错误'}`);
-      }
-      return null;
-    } finally {
-      setIsGeneratingScript(false);
-    }
-  };
-
   const reset = () => {
     setStep('home');
     setCurrentQuestionIndex(0);
@@ -493,257 +321,13 @@ Text: [对话或旁白内容]`;
     setPetBirthday('');
     setPetGender('male');
     setSelectedBreedId(petType === 'dog' ? 'other_dog' : 'other_cat');
+    setMatchResult(null);
   };
 
-  const parseComicScript = (script: string | null) => {
-    if (!script) return [];
-    // Strip markdown code blocks if present
-    const cleanScript = script.replace(/```[\s\S]*?```/g, '').trim();
-    const panels: { text: string; speaker?: string }[] = [];
-    const sections = cleanScript.split(/Panel\s+\d+:/i);
-    
-    sections.forEach(section => {
-      if (!section.trim()) return;
-      const textMatch = section.match(/Text:\s*(.*)/i);
-      const speakerMatch = section.match(/Speaker:\s*(.*)/i);
-      if (textMatch && textMatch[1]) {
-        panels.push({ 
-          text: textMatch[1].trim(),
-          speaker: speakerMatch ? speakerMatch[1].trim() : ''
-        });
-      }
-    });
-    return panels;
-  };
-
-  const generateComic = async () => {
-    setIsGeneratingComic(true);
-    setComicGenerationProgress(0);
-    setComicImageUrls([]);
-    try {
-      let apiKey = process.env.GEMINI_API_KEY || import.meta.env.VITE_GEMINI_API_KEY;
-      if (apiKey) apiKey = apiKey.trim();
-      
-      if (!apiKey || apiKey === 'MY_GEMINI_API_KEY' || apiKey === '' || apiKey.includes('TODO')) {
-        console.error('Comic Generation: Gemini API Key is missing');
-        throw new Error('API_KEY_MISSING');
-      }
-      const ai = new GoogleGenAI({ apiKey });
-      
-      let script = comicScript;
-      if (!script) {
-        script = await generateComicScript();
-      }
-      if (!script) throw new Error('剧本生成失败');
-
-      const panels = parseComicScript(script);
-      if (panels.length < 6) throw new Error('剧本解析失败，未找到足够的格数');
-
-      const breedName = petType === 'dog' 
-        ? BREED_DATA.find(b => b.id === selectedBreedId)?.name 
-        : CAT_BREED_DATA.find(b => b.id === selectedBreedId)?.name;
-
-      const generatedUrls: string[] = [];
-
-      // Generate 6 panels sequentially for better control and progress tracking
-      const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
-
-      for (let i = 0; i < 6; i++) {
-        setComicGenerationProgress(i + 1);
-        
-        // Add a small delay between panels to avoid hitting rate limits
-        if (i > 0) await sleep(1500);
-
-        const isLastPanel = i === 5;
-        const panelScript = panels[i];
-
-        const prompt = `Create a single high-quality comic panel (Panel ${i + 1} of 6) for a pet named "${petName}".
-Style: cute pet comic, kawaii style, Japanese slice of life comic, soft pastel colors, hand drawn illustration.
-Main character: a fluffy cream ${breedName} ${petType === 'dog' ? 'dog' : 'cat'} with a round face, small ears, and a curly tail.
-The character must look identical to the provided reference photo.
-
-Anatomy: The ${petType} MUST have exactly 4 legs. Ensure anatomically correct posture. No extra limbs.
-
-Scene Description: ${panelScript.text}
-
-CRITICAL INSTRUCTIONS - READ CAREFULLY:
-- ABSOLUTELY NO TEXT, NO LETTERS, NO NUMBERS, NO SYMBOLS, NO CAPTIONS, NO WATERMARKS.
-- DO NOT draw speech bubbles, thought bubbles, or any UI elements.
-- The image must be 100% PURELY VISUAL.
-- If the scene description mentions words or names, DO NOT draw them.
-- ${isLastPanel ? `This is the FINAL panel. It MUST include a "Pet ID Card" or "Personality Card" held by the owner or shown next to the pet. The ID card MUST BE COMPLETELY BLANK (no text, no letters, no numbers). Style: cute pet ID card, rounded corners, pastel colors, small paw decorations.` : 'Focus entirely on visual storytelling through actions and expressions.'}
-
-NEGATIVE PROMPT: text, words, letters, numbers, symbols, watermark, signature, blurry, low quality, extra limbs, distorted anatomy.`;
-
-        const contents: any = {
-          parts: [{ text: prompt }]
-        };
-
-        if (referenceImage) {
-          // Image is already resized in handleImageUpload
-          const mimeType = referenceImage.split(';')[0].split(':')[1] || 'image/jpeg';
-          const base64Data = referenceImage.split(',')[1];
-          contents.parts.unshift({
-            inlineData: {
-              data: base64Data,
-              mimeType: mimeType
-            }
-          });
-        }
-
-        let response = null;
-        let retries = 3;
-        let baseDelay = 4000;
-
-        for (let attempt = 0; attempt < retries; attempt++) {
-          try {
-            response = await ai.models.generateContent({
-              model: 'gemini-2.5-flash-image',
-              contents
-            });
-            break; // Success
-          } catch (error: any) {
-            const errorStr = JSON.stringify(error);
-            const isRateLimit = error?.status === 'RESOURCE_EXHAUSTED' || 
-                               error?.message?.includes('429') || 
-                               errorStr.includes('429');
-            
-            if (isRateLimit && attempt < retries - 1) {
-              const waitTime = baseDelay * Math.pow(2, attempt);
-              console.warn(`Panel ${i + 1} rate limit hit (attempt ${attempt + 1}), retrying in ${waitTime}ms...`);
-              await sleep(waitTime);
-              continue;
-            }
-            throw error;
-          }
-        }
-
-        let imageUrl = null;
-        for (const part of response?.candidates?.[0]?.content?.parts || []) {
-          if (part.inlineData) {
-            imageUrl = `data:image/png;base64,${part.inlineData.data}`;
-            break;
-          }
-        }
-
-        if (imageUrl) {
-          generatedUrls.push(imageUrl);
-          setComicImageUrls([...generatedUrls]); // Update UI progressively
-        } else {
-          throw new Error(`第 ${i + 1} 格生成失败`);
-        }
-      }
-    } catch (error: any) {
-      console.error('Comic generation failed:', error);
-      const errorStr = JSON.stringify(error);
-      const isRateLimit = error?.status === 'RESOURCE_EXHAUSTED' || 
-                         error?.message?.includes('429') || 
-                         errorStr.includes('429');
-      
-      if (error?.message === 'API_KEY_MISSING') {
-        showToastWithMsg('API密钥未配置。请在 AI Studio 设置中添加 Gemini API Key。');
-      } else if (errorStr.includes('API_KEY_INVALID')) {
-        showToastWithMsg('API密钥无效，请检查Key是否填错或有空格');
-      } else if (isRateLimit) {
-        showToastWithMsg('生成速度过快，请稍等片刻再试哦');
-      } else if (errorStr.includes('Safety') || error?.message?.includes('Safety')) {
-        showToastWithMsg('内容触发安全策略，请尝试更换照片或描述');
-      } else {
-        const detail = error?.message || (typeof error === 'object' ? errorStr : String(error));
-        showToastWithMsg(`生成失败: ${detail.substring(0, 30)}...，请重试`);
-      }
-    } finally {
-      setIsGeneratingComic(false);
-      setComicGenerationProgress(0);
-    }
-  };
-
-  const downloadFullComic = async () => {
-    if (comicImageUrls.length < 6) {
-      showToastWithMsg('请等待所有漫画生成完毕');
-      return;
-    }
-    
-    setIsGeneratingPDF(true);
-    try {
-      const canvas = document.createElement('canvas');
-      const ctx = canvas.getContext('2d');
-      if (!ctx) throw new Error('无法创建画布');
-
-      // Load all images first
-      const images = await Promise.all(comicImageUrls.map(url => {
-        return new Promise<HTMLImageElement>((resolve, reject) => {
-          const img = new Image();
-          img.crossOrigin = 'anonymous';
-          img.onload = () => resolve(img);
-          img.onerror = reject;
-          img.src = url;
-        });
-      }));
-
-      // Layout: 2 columns, 3 rows
-      const padding = 40;
-      const gap = 20;
-      const imgWidth = images[0].width;
-      const imgHeight = images[0].height;
-      
-      canvas.width = imgWidth * 2 + gap + padding * 2;
-      canvas.height = imgHeight * 3 + gap * 2 + padding * 2 + 100; // Extra space for header
-
-      // Draw background
-      ctx.fillStyle = '#ffffff';
-      ctx.fillRect(0, 0, canvas.width, canvas.height);
-
-      // Draw Header
-      ctx.fillStyle = '#2D2D2D';
-      ctx.font = 'bold 40px sans-serif';
-      ctx.textAlign = 'center';
-      ctx.fillText(`${petName} 的专属漫画全集`, canvas.width / 2, padding + 40);
-      
-      ctx.fillStyle = '#9ca3af';
-      ctx.font = '20px sans-serif';
-      ctx.fillText(`AI 漫画工坊 · 性格分析报告专属定制`, canvas.width / 2, padding + 80);
-
-      // Draw images
-      images.forEach((img, i) => {
-        const col = i % 2;
-        const row = Math.floor(i / 2);
-        const x = padding + col * (imgWidth + gap);
-        const y = padding + 120 + row * (imgHeight + gap);
-        
-        // Draw shadow/border for each panel
-        ctx.shadowColor = 'rgba(0,0,0,0.1)';
-        ctx.shadowBlur = 10;
-        ctx.shadowOffsetX = 0;
-        ctx.shadowOffsetY = 4;
-        ctx.fillStyle = '#ffffff';
-        ctx.fillRect(x - 2, y - 2, imgWidth + 4, imgHeight + 4);
-        ctx.shadowBlur = 0; // Reset shadow
-
-        ctx.drawImage(img, x, y, imgWidth, imgHeight);
-        
-        // Draw panel number
-        ctx.fillStyle = 'rgba(0,0,0,0.5)';
-        ctx.fillRect(x + 10, y + 10, 40, 40);
-        ctx.fillStyle = '#ffffff';
-        ctx.font = 'bold 20px sans-serif';
-        ctx.textAlign = 'center';
-        ctx.textBaseline = 'middle';
-        ctx.fillText((i + 1).toString(), x + 30, y + 30);
-      });
-
-      const dataUrl = canvas.toDataURL('image/png');
-      const link = document.createElement('a');
-      link.download = `FullComic_${petName}.png`;
-      link.href = dataUrl;
-      link.click();
-      showToastWithMsg('全集漫画已保存');
-    } catch (err) {
-      console.error('Download full comic error:', err);
-      showToastWithMsg('保存失败，请重试');
-    } finally {
-      setIsGeneratingPDF(false);
-    }
+  const calculateMatch = () => {
+    if (!resultType.code || !ownerMbti) return;
+    const result = getRelationship(resultType.code, ownerMbti);
+    setMatchResult(result);
   };
 
   const exportToImage = async () => {
@@ -1146,6 +730,138 @@ NEGATIVE PROMPT: text, words, letters, numbers, symbols, watermark, signature, b
                     <div className="text-lg sm:text-xl font-black" style={{ color: '#b45309' }}>{fortune}</div>
                   </div>
                 </div>
+
+                {/* Pet-Owner Match Analysis Module */}
+                <section className="p-6 sm:p-10 rounded-[2rem] sm:rounded-[3rem] border-4 space-y-6" style={{ backgroundColor: '#ffffff', borderColor: '#FFE66D', boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.1)' }}>
+                  <div className="flex items-center gap-3 mb-2">
+                    <div className="w-10 h-10 rounded-2xl flex items-center justify-center" style={{ backgroundColor: '#fffbeb' }}>
+                      <Heart size={20} style={{ color: '#fb7185' }} />
+                    </div>
+                    <h2 className="text-2xl font-black" style={{ color: '#2D2D2D' }}>测测你和宠物的匹配度</h2>
+                  </div>
+
+                  <div className="space-y-4" data-html2canvas-ignore>
+                    <div className="flex flex-col gap-2">
+                      <label className="text-xs font-black text-gray-400 uppercase tracking-widest ml-2">你的 MBTI 类型</label>
+                      <div className="flex gap-2">
+                        <select 
+                          value={ownerMbti}
+                          onChange={(e) => setOwnerMbti(e.target.value)}
+                          className="flex-1 px-6 py-4 bg-gray-50 border-2 border-gray-100 rounded-2xl focus:border-[#FFE66D] outline-none font-bold text-gray-700 shadow-sm cursor-pointer"
+                        >
+                          {ALL_MBTI_CODES.map(code => (
+                            <option key={code} value={code}>{code}</option>
+                          ))}
+                        </select>
+                        <button 
+                          onClick={calculateMatch}
+                          className="px-8 py-4 bg-[#2D2D2D] text-white rounded-2xl font-black text-sm shadow-xl hover:scale-[1.02] active:scale-[0.98] transition-all"
+                        >
+                          计算匹配度
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+
+                  {matchResult && (
+                    <motion.div 
+                      initial={{ opacity: 0, scale: 0.95 }}
+                      animate={{ opacity: 1, scale: 1 }}
+                      className="space-y-6 pt-4"
+                    >
+                      <div className="text-center space-y-2">
+                        <p className="text-sm font-black text-gray-400 uppercase tracking-widest">你和 {petName} 的匹配度</p>
+                        <div className="text-6xl font-black text-[#fb7185] tracking-tighter">{matchResult.score}%</div>
+                      </div>
+
+                      <div className="h-4 w-full bg-gray-100 rounded-full overflow-hidden p-1 shadow-inner">
+                        <motion.div 
+                          initial={{ width: 0 }}
+                          animate={{ width: `${matchResult.score}%` }}
+                          className="h-full bg-gradient-to-r from-[#fb7185] to-[#f43f5e] rounded-full shadow-sm"
+                        />
+                      </div>
+
+                      <div className="grid grid-cols-1 gap-4">
+                        <div className="p-6 rounded-3xl bg-gray-50 border border-gray-100 space-y-2">
+                          <div className="flex justify-between items-center">
+                            <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest">关系类型</p>
+                            <span className="px-3 py-1 bg-[#fb7185] text-white text-[10px] font-black rounded-full uppercase tracking-widest">
+                              {matchResult.type}
+                            </span>
+                          </div>
+                          <p className="text-xl font-black text-[#2D2D2D]">{matchResult.summary}</p>
+                        </div>
+
+                        <div className="p-6 rounded-3xl bg-gray-50 border border-gray-100 space-y-3">
+                          <div className="flex items-center gap-2">
+                            <Sparkles size={14} className="text-[#fb7185]" />
+                            <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest">日常相处画风</p>
+                          </div>
+                          <p className="text-sm font-bold text-gray-600 leading-relaxed">
+                            {matchResult.vibe}
+                          </p>
+                        </div>
+
+                        <div className="p-6 rounded-3xl bg-gray-50 border border-gray-100 space-y-4">
+                          <div className="flex items-center gap-2">
+                            <Shield size={14} className="text-[#3b82f6]" />
+                            <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest">家庭话语权</p>
+                          </div>
+                          <div className="space-y-3">
+                            <div className="flex justify-between items-end">
+                              <div className="text-center">
+                                <p className="text-[8px] font-black text-gray-400 uppercase mb-1">你</p>
+                                <p className="text-lg font-black text-[#2D2D2D]">{matchResult.bossRatio.owner}%</p>
+                              </div>
+                              <div className="flex-1 px-4 pb-2">
+                                <div className="h-2 w-full bg-gray-200 rounded-full overflow-hidden flex">
+                                  <div 
+                                    className="h-full bg-[#3b82f6]" 
+                                    style={{ width: `${matchResult.bossRatio.owner}%` }} 
+                                  />
+                                  <div 
+                                    className="h-full bg-[#fb7185]" 
+                                    style={{ width: `${matchResult.bossRatio.pet}%` }} 
+                                  />
+                                </div>
+                              </div>
+                              <div className="text-center">
+                                <p className="text-[8px] font-black text-gray-400 uppercase mb-1">{petName}</p>
+                                <p className="text-lg font-black text-[#fb7185]">{matchResult.bossRatio.pet}%</p>
+                              </div>
+                            </div>
+                            <p className="text-[10px] text-center font-bold text-gray-400 italic">
+                              “{matchResult.bossText}”
+                            </p>
+                          </div>
+                        </div>
+
+                        <div className="p-6 rounded-3xl bg-[#2D2D2D] text-white space-y-2">
+                          <div className="flex items-center gap-2">
+                            <MessageCircle size={14} className="text-[#FFE66D]" />
+                            <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest">相处建议</p>
+                          </div>
+                          <p className="text-sm font-bold leading-relaxed">
+                            {matchResult.advice}
+                          </p>
+                        </div>
+                      </div>
+
+                      <div className="flex justify-between items-center px-4 py-3 bg-gray-50 rounded-2xl border border-gray-100">
+                        <div className="text-center">
+                          <p className="text-[8px] font-black text-gray-400 uppercase tracking-widest">宠物 MBTI</p>
+                          <p className="text-lg font-black text-[#2D2D2D]">{resultType.code}</p>
+                        </div>
+                        <div className="w-px h-8 bg-gray-200" />
+                        <div className="text-center">
+                          <p className="text-[8px] font-black text-gray-400 uppercase tracking-widest">主人 MBTI</p>
+                          <p className="text-lg font-black text-[#2D2D2D]">{ownerMbti}</p>
+                        </div>
+                      </div>
+                    </motion.div>
+                  )}
+                </section>
 
                 <div className="p-6 sm:p-8 rounded-2xl sm:rounded-[2.5rem] border text-center" style={{ backgroundColor: '#f9fafb', borderColor: '#f3f4f6' }}>
                   <div className="flex justify-center gap-2 mb-3 sm:mb-4">
